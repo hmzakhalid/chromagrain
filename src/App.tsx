@@ -27,6 +27,7 @@ type FilterSettings = {
   vignette: number;
   dotFade: number;
   formDots: number;
+  toneMap: number;
 };
 
 type SourceImage = {
@@ -42,7 +43,8 @@ const defaultSettings: FilterSettings = {
   contrast: 40,
   vignette: 44,
   dotFade: 10,
-  formDots: 0,
+  formDots: 48,
+  toneMap: 28,
 };
 
 const MAX_CANVAS_SIDE = 1800;
@@ -72,6 +74,21 @@ function fitDimensions(width: number, height: number) {
   };
 }
 
+function getPercentile(histogram: number[], total: number, percentile: number) {
+  const target = total * percentile;
+  let seen = 0;
+
+  for (let index = 0; index < histogram.length; index += 1) {
+    seen += histogram[index];
+
+    if (seen >= target) {
+      return index / (histogram.length - 1);
+    }
+  }
+
+  return 1;
+}
+
 function getLuminance(luminance: Float32Array, width: number, height: number, x: number, y: number) {
   const sampleX = Math.min(width - 1, Math.max(0, x));
   const sampleY = Math.min(height - 1, Math.max(0, y));
@@ -97,14 +114,14 @@ function drawFormAwareStipple(
   }
 
   const grain = settings.grain / 100;
-  const spacing = Math.max(2.8, 5.4 - grain * 2.2);
+  const spacing = Math.max(2.05, 4.05 - grain * 1.25 - formStrength * 0.55);
   const seed = width * 0.07 + height * 0.11 + settings.contrast * 0.13;
-  const density = 0.34 + grain * 0.46 + formStrength * 0.5;
-  const dotScale = 0.58 + formStrength * 0.72;
+  const density = 0.42 + grain * 0.24 + formStrength * 0.82;
+  const dotScale = 0.58 + formStrength * 0.46;
 
   context.save();
-  context.globalCompositeOperation = 'screen';
-  context.fillStyle = `rgb(${GREEN_HIGH[0]}, ${GREEN_HIGH[1]}, ${GREEN_HIGH[2]})`;
+  context.globalCompositeOperation = 'source-over';
+  context.fillStyle = 'rgb(156, 178, 151)';
 
   for (let y = 2; y < height - 2; y += spacing) {
     const row = Math.floor(y / spacing);
@@ -132,13 +149,19 @@ function drawFormAwareStipple(
         getLuminance(luminance, width, height, sampleX - 1, sampleY + 1) +
         2 * getLuminance(luminance, width, height, sampleX, sampleY + 1) +
         getLuminance(luminance, width, height, sampleX + 1, sampleY + 1);
-      const edge = smoothstep(0.035, 0.34, Math.sqrt(gx * gx + gy * gy));
-      const highlight = smoothstep(0.16, 0.92, surfaceTone);
-      const midtone = clamp(1 - Math.abs(surfaceTone - 0.52) * 2.05, 0, 1);
-      const shadowDetail =
-        smoothstep(0.08, 0.48, surfaceTone) * (1 - smoothstep(0.58, 0.88, surfaceTone));
+      const edge = smoothstep(0.025, 0.28, Math.sqrt(gx * gx + gy * gy));
+      const leftTone = tone[sampleY * width + sampleX - 1] ?? surfaceTone;
+      const rightTone = tone[sampleY * width + sampleX + 1] ?? surfaceTone;
+      const topTone = tone[(sampleY - 1) * width + sampleX] ?? surfaceTone;
+      const bottomTone = tone[(sampleY + 1) * width + sampleX] ?? surfaceTone;
+      const localToneAverage = (surfaceTone * 4 + leftTone + rightTone + topTone + bottomTone) / 8;
+      const localDetail = smoothstep(0.006, 0.12, Math.abs(surfaceTone - localToneAverage) + edge * 0.14);
+      const darkSurface =
+        smoothstep(0.025, 0.22, surfaceTone) * (1 - smoothstep(0.5, 0.72, surfaceTone));
+      const highlightBlock = 1 - smoothstep(0.5, 0.66, surfaceTone);
+      const structuredShadow = clamp(0.22 + edge * 0.72 + localDetail * 0.64, 0, 1);
       const surfacePresence = clamp(
-        highlight * 0.72 + midtone * 0.34 + shadowDetail * 0.38 + edge * 0.9,
+        darkSurface * highlightBlock * structuredShadow,
         0,
         1,
       );
@@ -148,46 +171,20 @@ function drawFormAwareStipple(
         continue;
       }
 
-      const contourAngle =
-        edge > 0.05
-          ? Math.atan2(gy, gx) + Math.PI / 2
-          : seededNoise(column, row, seed + 42.4) * Math.PI;
-      const pinched = 1 - smoothstep(0.05, 0.55, surfaceTone);
       const radius = Math.max(
-        0.34,
-        (0.34 + highlight * 0.72 + shadowDetail * 0.3 + edge * 0.46) * dotScale,
+        0.24,
+        (0.24 + darkSurface * 0.34 + localDetail * 0.1 + edge * 0.08) * dotScale,
       );
-      const radiusX = radius * (1 + edge * 1.85 + pinched * 0.38);
-      const radiusY = Math.max(0.28, radius * (0.72 - edge * 0.24));
       const alpha = clamp(
-        0.12 + highlight * 0.3 + shadowDetail * 0.16 + edge * 0.34 + formStrength * 0.24,
-        0.08,
-        0.82,
+        0.18 + darkSurface * 0.28 + localDetail * 0.08 + formStrength * 0.18,
+        0.12,
+        0.62,
       );
 
       context.globalAlpha = alpha;
       context.beginPath();
-      context.ellipse(sampleX, sampleY, radiusX, radiusY, contourAngle, 0, Math.PI * 2);
+      context.arc(sampleX, sampleY, radius, 0, Math.PI * 2);
       context.fill();
-
-      if (edge > 0.48 && seededNoise(column, row, seed + 63.8) > 0.52) {
-        const followerDistance = spacing * (0.36 + seededNoise(column, row, seed + 72.1) * 0.36);
-        const followX = sampleX + Math.cos(contourAngle) * followerDistance;
-        const followY = sampleY + Math.sin(contourAngle) * followerDistance;
-
-        context.globalAlpha = alpha * 0.52;
-        context.beginPath();
-        context.ellipse(
-          followX,
-          followY,
-          Math.max(0.28, radiusX * 0.56),
-          Math.max(0.22, radiusY * 0.62),
-          contourAngle,
-          0,
-          Math.PI * 2,
-        );
-        context.fill();
-      }
     }
   }
 
@@ -215,6 +212,7 @@ function applyFilter(
   const { data } = imageData;
   const luminance = new Float32Array(width * height);
   const tone = new Float32Array(width * height);
+  const histogram = Array.from({ length: 256 }, () => 0);
   const contrast = 0.82 + settings.contrast / 58;
   const grainStrength = settings.grain / 100;
   const glow = settings.glow / 100;
@@ -224,18 +222,50 @@ function applyFilter(
   const centerY = height / 2;
   const maxDistance = Math.sqrt(centerX * centerX + centerY * centerY);
   const seed = width * 0.13 + height * 0.17 + settings.grain * 0.03;
+  let luminanceTotal = 0;
 
   for (let index = 0; index < data.length; index += 4) {
     const red = data[index];
     const green = data[index + 1];
     const blue = data[index + 2];
-    luminance[index / 4] = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+    const luminanceValue = (0.2126 * red + 0.7152 * green + 0.0722 * blue) / 255;
+    luminance[index / 4] = luminanceValue;
+    luminanceTotal += luminanceValue;
+    histogram[Math.min(255, Math.max(0, Math.round(luminanceValue * 255)))] += 1;
   }
+
+  const pixelCount = width * height;
+  const imageMean = luminanceTotal / pixelCount;
+  const brightImage = smoothstep(0.54, 0.78, imageMean);
+  const toneMap = settings.toneMap / 100;
+  const rawBlackPoint = getPercentile(
+    histogram,
+    pixelCount,
+    0.02 + toneMap * (0.06 + brightImage * 0.05),
+  );
+  const rawWhitePoint = getPercentile(histogram, pixelCount, 0.985 - toneMap * 0.02);
+  const rawRange = rawWhitePoint - rawBlackPoint;
+  const shadowPadding = rawRange < 0.18 ? 0.09 - toneMap * 0.04 : 0.035 - toneMap * 0.015;
+  const highlightPadding = rawRange < 0.18 ? 0.03 + toneMap * 0.01 : 0.006 + toneMap * 0.008;
+  const blackPoint = clamp(rawBlackPoint - shadowPadding, 0, 1);
+  const whitePoint = clamp(rawWhitePoint + highlightPadding, 0, 1);
+  const tonalRange = Math.max(0.08, whitePoint - blackPoint);
+  const blackCrush = toneMap * (0.04 + brightImage * 0.16);
+  const clarity = 0.06 + settings.contrast / 520 + toneMap * (0.18 + brightImage * 0.1);
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const index = (y * width + x) * 4;
       const luminanceValue = luminance[y * width + x];
+      const normalized = clamp((luminanceValue - blackPoint) / tonalRange, 0, 1);
+      const localAverage =
+        (normalized * 4 +
+          clamp((getLuminance(luminance, width, height, x - 1, y) - blackPoint) / tonalRange, 0, 1) +
+          clamp((getLuminance(luminance, width, height, x + 1, y) - blackPoint) / tonalRange, 0, 1) +
+          clamp((getLuminance(luminance, width, height, x, y - 1) - blackPoint) / tonalRange, 0, 1) +
+          clamp((getLuminance(luminance, width, height, x, y + 1) - blackPoint) / tonalRange, 0, 1)) /
+        8;
+      const shapedLuminance = clamp(normalized + (normalized - localAverage) * clarity, 0, 1);
       const noise = (seededNoise(x, y, seed) - 0.5) * grainStrength;
       const cellSize = 5;
       const cellX = (x % cellSize) - cellSize / 2;
@@ -244,9 +274,11 @@ function applyFilter(
       const dotTexture = dotFade * Math.max(0, dot - 0.45) * 0.35;
       const distance = Math.sqrt((x - centerX) ** 2 + (y - centerY) ** 2) / maxDistance;
       const edgeShade = Math.pow(distance, 1.85) * vignette * 0.62;
-      const brightened = Math.pow(luminanceValue, 0.82 - glow * 0.2);
-      const toned = clamp((brightened - 0.5) * contrast + 0.5 + noise - edgeShade - dotTexture, 0, 1);
-      const lifted = Math.pow(toned, 1.04);
+      const brightened = Math.pow(shapedLuminance, 0.92 - glow * 0.16);
+      const crushed = clamp((brightened - blackCrush) / (1 - blackCrush * 0.66), 0, 1);
+      const depthCurve = Math.pow(crushed, 1 + toneMap * (0.16 + brightImage * 0.2));
+      const toned = clamp((depthCurve - 0.5) * contrast + 0.5 + noise - edgeShade - dotTexture, 0, 1);
+      const lifted = Math.pow(toned, 1 + toneMap * (0.16 + brightImage * 0.2));
       tone[y * width + x] = lifted;
 
       data[index] = clamp(GREEN_LOW[0] + (GREEN_HIGH[0] - GREEN_LOW[0]) * lifted);
@@ -448,6 +480,7 @@ function App() {
       { key: 'vignette' as const, label: 'Vignette', min: 0, max: 100 },
       { key: 'dotFade' as const, label: 'Dot fade', min: 0, max: 100 },
       { key: 'formDots' as const, label: 'Form dots', min: 0, max: 100 },
+      { key: 'toneMap' as const, label: 'Tone map', min: 0, max: 100 },
     ],
     [],
   );
