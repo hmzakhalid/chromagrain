@@ -1,5 +1,6 @@
 import {
   Download,
+  ExternalLink,
   ImageIcon,
   Loader2,
   RotateCcw,
@@ -50,6 +51,7 @@ const defaultSettings: FilterSettings = {
 const MAX_CANVAS_SIDE = 1800;
 const GREEN_LOW = [11, 18, 15] as const;
 const GREEN_HIGH = [201, 224, 193] as const;
+const INTERFOLD_URL = 'https://www.theinterfold.com/';
 
 function clamp(value: number, min = 0, max = 255) {
   return Math.min(max, Math.max(min, value));
@@ -499,6 +501,16 @@ function App() {
         </div>
 
         <div className="top-actions">
+          <a
+            className="link-button"
+            href={INTERFOLD_URL}
+            target="_blank"
+            rel="noreferrer"
+            title="Check out The Interfold"
+          >
+            <ExternalLink size={17} />
+            <span>The Interfold</span>
+          </a>
           <button
             className="icon-button"
             type="button"

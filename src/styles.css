@@ -95,6 +95,7 @@ button:disabled {
 .panel-heading,
 .compact-actions,
 .mode-button,
+.link-button,
 .primary-button,
 .icon-button,
 .empty-state {
@@ -144,6 +145,7 @@ button:disabled {
 }
 
 .primary-button,
+.link-button,
 .icon-button,
 .mode-button {
   min-height: 42px;
@@ -158,11 +160,23 @@ button:disabled {
 }
 
 .primary-button:hover,
+.link-button:hover,
 .icon-button:hover,
 .mode-button:hover {
   border-color: var(--line-strong);
   background: rgba(35, 44, 37, 0.84);
   transform: translateY(-1px);
+}
+
+.link-button {
+  justify-content: center;
+  gap: 8px;
+  min-width: 148px;
+  padding: 0 14px;
+  color: var(--mint-strong);
+  font-size: 0.9rem;
+  font-weight: 760;
+  text-decoration: none;
 }
 
 .primary-button {
@@ -521,6 +535,11 @@ button:disabled {
 
   .primary-button {
     flex: 1;
+  }
+
+  .link-button {
+    flex: 1;
+    min-width: 0;
   }
 
   .workspace {
